@@ -299,68 +299,65 @@ void create_headers() {
 void fin(); //just to satisfy the compiler
 
 void send_file() {
-  file_fd = open(filename, O_RDONLY);
-  struct packet_hdr pkt;
-  memset(&pkt, 0, sizeof(struct packet_hdr));
-  
-  if (file_fd == -1) {
-    not_found_error = 1;
-    filesize = 27;
-  }
-  else {
+    // 开文件
+    file_fd = open(filename, O_RDONLY);
+
+    // pkt
+    struct packet_hdr pkt;
+    memset(&pkt, 0, sizeof(struct packet_hdr));
+
+
     struct stat sb;
     stat(filename, &sb);
     filesize = sb.st_size;
-  }
-  create_headers();
-  
-  pthread_t ack_thread;
-  pthread_create(&ack_thread, NULL, ACKreader, NULL); //start ACK reader thread
-  pthread_detach(ack_thread);
-  
-  int index = 0;
-  while (1) {
-    pthread_mutex_lock(&master_lock);
-    int min = min_index;
-    int max = max_index;
-
-    if (min == num_packets) {
-      pthread_mutex_unlock(&master_lock);
-      break;
-    }
     
-    for (int i = min; i <= max && i < num_packets; i++) {
-      if (ack_status[i] == ACKED)
-	continue;
+    create_headers();
 
-      if (timer_active[i] == 0) {     //new transmission
-	timers[i] = std::chrono::steady_clock::now();
-	if (send_data(i) == -1)
-	  exit(1);
-	print_send(headers[i].seq_n, rwnd, 0, 0, 0);
-	timer_active[i] = 1;
-      }
-      
-      else {
-	std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
-	double t = std::chrono::duration_cast<std::chrono::milliseconds>(end - timers[i]).count();
-	if (t < TIMEOUT) 
-	  continue;
-	timers[i] = std::chrono::steady_clock::now(); //reset clock
-	if (send_data(i) == -1)
-	  exit(1);
-	print_send(headers[i].seq_n, rwnd, 1, 0, 0);
-      }
+    pthread_t ack_thread;
+    pthread_create(&ack_thread, NULL, ACKreader, NULL); //start ACK reader thread
+    pthread_detach(ack_thread);
+
+    int index = 0;
+    while (1) {
+        pthread_mutex_lock(&master_lock);
+        int min = min_index;
+        int max = max_index;
+
+        if (min == num_packets) {
+            pthread_mutex_unlock(&master_lock);
+            break;
+        }
+
+        for (int i = min; i <= max && i < num_packets; i++) {
+            if (ack_status[i] == ACKED)
+                continue;
+
+            if (timer_active[i] == 0) {     //new transmission
+                timers[i] = std::chrono::steady_clock::now();
+                send_data(i);
+                print_send(headers[i].seq_n, rwnd, 0, 0, 0);
+                timer_active[i] = 1;
+            }
+
+            else {
+                std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
+                double t = std::chrono::duration_cast<std::chrono::milliseconds>(end - timers[i]).count();
+                if (t < TIMEOUT) 
+                    continue;
+                timers[i] = std::chrono::steady_clock::now(); //reset clock
+                send_data(i);
+                print_send(headers[i].seq_n, rwnd, 1, 0, 0);
+            }
+        }
+
+        pthread_mutex_unlock(&master_lock);
+        //optional usleep
     }
-    
-    pthread_mutex_unlock(&master_lock);
-    //optional usleep
-  }
 
-  delete [] timers;
-  free(timer_active);
-  free(headers);
-  free(ack_status);
+    delete [] timers;
+    free(timer_active);
+    free(headers);
+    free(ack_status);
 }
 
 void *finack_reader(void *arg) { // this thread reads the finack
