@@ -217,99 +217,101 @@ void fin(uint64_t final_seqnum) {
 
 
 void get_file() {
-  while(1) {
-    char data[MAX_PACKET_SIZE];
-    struct packet_hdr pkt;
-    
-    int bytes;
-    if ((bytes = rcv_data(&pkt, data)) == -1)
-      exit(1);
+    while(1) {
+        char data[MAX_PACKET_SIZE];
+        struct packet_hdr pkt;
 
-    if (pkt.syn_flag == 1) //ignore handshake packets
-      continue;
-    
-    if (pkt.fin_flag == 1) {     //Got a FIN
-      print_rcv(pkt.seq_n);
-      fin(pkt.seq_n);
+        int bytes;
+        rcv_data(&pkt, data);
+
+        if (pkt.syn_flag == 1) //ignore handshake packets
+        continue;
+
+        if (pkt.fin_flag == 1) {     //Got a FIN
+            print_rcv(pkt.seq_n);
+            fin(pkt.seq_n);
+        }
+
+        // 如果notFound
+        if (bytes >= 27 && data[0] == 'H' && data[1] == 'T' && data[2] == 'T' && data[3] == 'P' &&
+        data[4] == '/' && data[5] == '1' && data[6] == '.' && data[7] == '1') {
+            //not found error
+            print_rcv(pkt.seq_n);
+            if (!file_not_found)
+                printf("%s\n", data);
+            pkt.ack_flag = 1;
+            pkt.ack_n = pkt.seq_n + bytes + sizeof(struct packet_hdr);
+            send_hdr(&pkt);
+            print_send(pkt.ack_n, file_not_found, 0, 0);
+            file_not_found = 1;
+        }
+
+        // 如果是最左边，移动窗口。
+        else if (pkt.seq_n == rcv_base) {
+            print_rcv(pkt.seq_n);
+            pkt.ack_flag = 1;
+            pkt.fin_flag = 0;
+            pkt.ack_n = (pkt.seq_n + bytes + sizeof(struct packet_hdr)) % MAX_SEQ_NUM;
+            send_hdr(&pkt);
+            print_send(pkt.ack_n, 0, 0, 0);
+            rcv_base = pkt.ack_n;
+
+            pwrite(filefd, data, bytes, write_index * (MAX_PACKET_SIZE - sizeof(struct packet_hdr)));
+            write_index++;
+            move_window();
+        }
+
+        // 如果发来的不在接收窗口里，再发ACK
+        else if (packet_below_window(pkt.seq_n)) { //must send ACK to move sender window
+            print_rcv(pkt.seq_n);
+            pkt.ack_flag = 1;
+            pkt.fin_flag = 0;
+            pkt.ack_n = (pkt.seq_n + bytes + sizeof(struct packet_hdr)) % MAX_SEQ_NUM;
+            send_hdr(&pkt);
+            print_send(pkt.ack_n, 1, 0, 0);
+        }
+
+        else {  //send ACK and buffer data
+            print_rcv(pkt.seq_n);
+            pkt.ack_flag = 1;
+            pkt.fin_flag = 0;
+            pkt.ack_n = (pkt.seq_n + bytes + sizeof(struct packet_hdr)) % MAX_SEQ_NUM;
+            send_hdr(&pkt);
+
+            if (is_buffered(&pkt))
+                print_send(pkt.ack_n, 1, 0, 0);
+            else {
+                print_send(pkt.ack_n, 0, 0, 0);
+                int ind = get_open_spot();
+                memcpy(BUFFER[ind], data, bytes);
+                spot_taken[ind] = 1;
+                buffered_sizes[ind] = bytes;
+                buffered_hdr[ind] = pkt;
+            }
+        }
     }
-
-    if (bytes >= 27 && data[0] == 'H' && data[1] == 'T' && data[2] == 'T' && data[3] == 'P' &&
-	data[4] == '/' && data[5] == '1' && data[6] == '.' && data[7] == '1') {
-      //not found error
-      print_rcv(pkt.seq_n);
-      if (!file_not_found)
-	printf("%s\n", data);
-      pkt.ack_flag = 1;
-      pkt.ack_n = pkt.seq_n + bytes + sizeof(struct packet_hdr);
-      send_hdr(&pkt);
-      print_send(pkt.ack_n, file_not_found, 0, 0);
-      file_not_found = 1;
-    }
-    
-    else if (pkt.seq_n == rcv_base) {
-      print_rcv(pkt.seq_n);
-      pkt.ack_flag = 1;
-      pkt.fin_flag = 0;
-      pkt.ack_n = (pkt.seq_n + bytes + sizeof(struct packet_hdr)) % MAX_SEQ_NUM;
-      send_hdr(&pkt);
-      print_send(pkt.ack_n, 0, 0, 0);
-      rcv_base = pkt.ack_n;
-
-      pwrite(filefd, data, bytes, write_index * (MAX_PACKET_SIZE - sizeof(struct packet_hdr)));
-      write_index++;
-      move_window();
-    }
-
-    else if (packet_below_window(pkt.seq_n)) { //must send ACK to move sender window
-      print_rcv(pkt.seq_n);
-      pkt.ack_flag = 1;
-      pkt.fin_flag = 0;
-      pkt.ack_n = (pkt.seq_n + bytes + sizeof(struct packet_hdr)) % MAX_SEQ_NUM;
-      send_hdr(&pkt);
-      print_send(pkt.ack_n, 1, 0, 0);
-    }
-
-    else {  //send ACK and buffer data
-      print_rcv(pkt.seq_n);
-      pkt.ack_flag = 1;
-      pkt.fin_flag = 0;
-      pkt.ack_n = (pkt.seq_n + bytes + sizeof(struct packet_hdr)) % MAX_SEQ_NUM;
-      send_hdr(&pkt);
-
-      if (is_buffered(&pkt))
-	print_send(pkt.ack_n, 1, 0, 0);
-      else {
-	print_send(pkt.ack_n, 0, 0, 0);
-	int ind = get_open_spot();
-	memcpy(BUFFER[ind], data, bytes);
-	spot_taken[ind] = 1;
-	buffered_sizes[ind] = bytes;
-	buffered_hdr[ind] = pkt;
-      }
-    }
-  }
 }
 
 void *SYNACK_read(void *arg) { //this thread handles reading of SYNACK
-  while(1) {
-    struct packet_hdr pkt;
-    memset(&pkt, 0, sizeof(struct packet_hdr));
-    rcv_hdr(&pkt);
-    
-    if (pkt.syn_flag != 1 || pkt.ack_flag != 1)
-      continue;
-    if (pkt.ack_n != my_seq_num + 1)
-      continue;
+    while(1) {
+        struct packet_hdr pkt;
+        memset(&pkt, 0, sizeof(struct packet_hdr));
+        rcv_hdr(&pkt);
 
-    pthread_mutex_lock(&master_lock);
-    rcv_base = pkt.seq_n;
-    print_rcv(pkt.seq_n);
-    rcv_base++;
-    synack_received = 1;
-    init_server_seqnum = rcv_base;
-    pthread_mutex_unlock(&master_lock);
-    return NULL;
-  }
+        if (pkt.syn_flag != 1 || pkt.ack_flag != 1)
+            continue;
+        if (pkt.ack_n != my_seq_num + 1)
+            continue;
+
+        pthread_mutex_lock(&master_lock);
+        rcv_base = pkt.seq_n;
+        print_rcv(pkt.seq_n);
+        rcv_base++;
+        synack_received = 1;
+        init_server_seqnum = rcv_base;
+        pthread_mutex_unlock(&master_lock);
+        return NULL;
+    }
 }
 
 void *first_packet(void *arg) { //this thread handles the first data packet received

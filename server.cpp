@@ -155,42 +155,43 @@ void rcv_hdr(struct packet_hdr *pkt) {
 }
 
 void *ACKreader(void *arg) {  //this thread handles reception of ACK's
-  while (1) {
-    struct packet_hdr pkt;
-    memset(&pkt, 0, sizeof(struct packet_hdr));
-    rcv_hdr(&pkt);
-    if (pkt.ack_flag != 1)  //ACK flag not set
-      continue;
-    pthread_mutex_lock(&master_lock);
-    int j;
-    for (j = min_index; j < max_index; j++) {
-      if (expected_ack(j) == pkt.ack_n)
-	break;
-    }
+    while (1) {
+        struct packet_hdr pkt;
+        memset(&pkt, 0, sizeof(struct packet_hdr));
 
-    if (j >= max_index) {  //No corresponding packet
-      pthread_mutex_unlock(&master_lock);
-      continue;
-    }
+        rcv_hdr(&pkt);
+        if (pkt.ack_flag != 1)  //ACK flag not set
+            continue;
+        pthread_mutex_lock(&master_lock);
+        int j;
+        for (j = min_index; j < max_index; j++) {
+            if (expected_ack(j) == pkt.ack_n)
+                break;
+        }
 
-    if (j >= min_index)
-      print_rcv(pkt.ack_n);
-    
-    ack_status[j] = ACKED;   //set to ACK'ed
-    if (j == min_index) {    //move window
-      while (j < num_packets && ack_status[j] == ACKED) {
-	min_index++;
-	max_index++;
-	j++;
-      }
-    }
+        if (j >= max_index) {  //No corresponding packet
+            pthread_mutex_unlock(&master_lock);
+            continue;
+        }
 
-    if (min_index == num_packets) {
-      pthread_mutex_unlock(&master_lock);
-      return NULL;
+        if (j >= min_index)
+            print_rcv(pkt.ack_n);
+
+        ack_status[j] = ACKED;   //set to ACK'ed
+        if (j == min_index) {    //move window
+            while (j < num_packets && ack_status[j] == ACKED) {
+                min_index++;
+                max_index++;
+                j++;
+            }
+        }
+
+        if (min_index == num_packets) {
+            pthread_mutex_unlock(&master_lock);
+            return NULL;
+        }
+        pthread_mutex_unlock(&master_lock);
     }
-    pthread_mutex_unlock(&master_lock);
-  }
 }
 
 void *handshake_ACK(void *arg) { //this thread reads client ACK during handshake
